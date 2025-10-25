@@ -258,7 +258,6 @@ from statsmodels.tsa.stattools import adfuller
 from statsmodels.stats.diagnostic import acorr_ljungbox, het_arch
 from statsmodels.stats.stattools import jarque_bera
 from scipy import stats
-from fpdf import FPDF
 import warnings
 warnings.filterwarnings("ignore")
 
