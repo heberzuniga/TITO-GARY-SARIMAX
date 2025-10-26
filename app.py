@@ -1,10 +1,10 @@
 # ==============================================================
 # 🧠 Sistema Inteligente de Modelado del Precio de la Soya – SolverTic SRL
-# Versión 4.6 FINAL – MAPE y AIC con formato (02.02)
+# Versión 4.9 FINAL – MAPE/AIC (02.02) + Panel Visual de Interpretación
 # ==============================================================
 
 import os
-os.environ["MPLCONFIGDIR"] = "/tmp/matplotlib"  # evita errores de matplotlib en Streamlit Cloud
+os.environ["MPLCONFIGDIR"] = "/tmp/matplotlib"
 
 import streamlit as st
 st.set_page_config(page_title="Sistema Inteligente de Modelado del Precio de la Soya", layout="wide")
@@ -177,20 +177,23 @@ if file:
 
     if df_res is not None:
         st.success("✅ Modelado completado exitosamente")
+
+        # MÉTRICAS
         c1, c2, c3 = st.columns(3)
-        c1.metric("Mejor MAPE", f"{best['mape']:05.2f}%")
-        c2.metric("AIC", f"{best['aic']:05.2f}")
+        c1.metric("Mejor MAPE", f"{best['mape']:06.2f}%")
+        c2.metric("AIC", f"{best['aic']:06.2f}")
         c3.metric("Modelos válidos", f"{df_res['valid'].sum()}/{len(df_res)}")
 
+        # TOP 10
         st.subheader("🏆 Top 10 modelos por MAPE")
         tabla = df_res.sort_values('mape').head(10)[
             ['order', 'seasonal', 'fourier_K', 'mape', 'aic']
         ].copy()
-        tabla['mape'] = tabla['mape'].map(lambda x: f"{x:05.2f}")
-        tabla['aic'] = tabla['aic'].map(lambda x: f"{x:05.2f}")
+        tabla['mape'] = tabla['mape'].map(lambda x: f"{x:06.2f}")
+        tabla['aic'] = tabla['aic'].map(lambda x: f"{x:06.2f}")
         st.dataframe(tabla)
 
-        # Gráfico AIC vs MAPE
+        # GRÁFICOS
         fig, ax = plt.subplots()
         ax.scatter(df_res['aic'], df_res['mape'], alpha=0.7, color='seagreen')
         ax.set_xlabel('AIC')
@@ -198,10 +201,10 @@ if file:
         ax.set_title('Relación AIC vs MAPE')
         st.pyplot(fig)
 
-        # Pronóstico
         res_best = best['res']
         fc = best['forecast']
         resid_best = best['resid']
+
         fig2, ax2 = plt.subplots(figsize=(10, 4))
         train.plot(ax=ax2, label='Train')
         test.plot(ax=ax2, label='Test')
@@ -209,35 +212,43 @@ if file:
         ax2.legend()
         st.pyplot(fig2)
 
-        # Residuales
-        fig_r, ax_r = plt.subplots(figsize=(8, 3))
-        resid_best.plot(ax=ax_r)
-        ax_r.set_title("Residuales en el tiempo")
-        st.pyplot(fig_r)
+        # PANEL DE INTERPRETACIÓN
+        with st.expander("ℹ️ Interpretación de Resultados"):
+            st.markdown("""
+            ### **MAPE (Mean Absolute Percentage Error)**
+            - Mide la precisión del modelo.
+            - Fórmula:  
+              \\[
+              MAPE = \\frac{1}{n} \\sum |\\frac{y_i - \\hat{y_i}}{y_i}| \\times 100
+              \\]
+            """)
+            mape_table = pd.DataFrame({
+                "Rango MAPE (%)": ["0 – 5", "5 – 10", "10 – 20", "> 20"],
+                "Interpretación": ["Excelente", "Buena", "Aceptable", "Débil"],
+                "Color": ["🟩 Verde", "🟨 Amarillo", "🟧 Naranja", "🟥 Rojo"]
+            })
+            st.table(mape_table)
 
-        # Histograma de residuales
-        fig_h, ax_h = plt.subplots(figsize=(6, 3))
-        ax_h.hist(resid_best, bins=20, color='skyblue', edgecolor='black', alpha=0.7, density=True)
-        x = np.linspace(ax_h.get_xlim()[0], ax_h.get_xlim()[1], 100)
-        ax_h.plot(x, stats.norm.pdf(x, resid_best.mean(), resid_best.std()), 'r', linewidth=2)
-        ax_h.set_title("Histograma de residuales con curva normal")
-        st.pyplot(fig_h)
-
-        # Q-Q Plot
-        fig_qq = plt.figure(figsize=(5, 3))
-        stats.probplot(resid_best, dist="norm", plot=plt)
-        plt.title("Q–Q Plot de los residuales")
-        st.pyplot(fig_qq)
-
-        # ACF y PACF
-        fig_acf = plt.figure(figsize=(5, 3))
-        plot_acf(resid_best, lags=min(24, len(resid_best)//2), ax=plt.gca())
-        plt.title("ACF de los residuales")
-        st.pyplot(fig_acf)
-
-        fig_pacf = plt.figure(figsize=(5, 3))
-        plot_pacf(resid_best, lags=min(24, len(resid_best)//2), ax=plt.gca(), method='ywm')
-        plt.title("PACF de los residuales")
-        st.pyplot(fig_pacf)
+            st.markdown("""
+            ---
+            ### **AIC (Akaike Information Criterion)**
+            - Evalúa equilibrio entre ajuste y complejidad.
+            - Cuanto menor sea, mejor el modelo.
+            \\[
+              AIC = 2k - 2\\ln(L)
+            \\]
+            ---
+            ### **JB (Jarque–Bera)**  
+            Verifica normalidad de los residuos. p > 0.05 → Normal.
+            ---
+            ### **LB (Ljung–Box)**  
+            Comprueba independencia temporal. p > 0.05 → Sin autocorrelación.
+            ---
+            ### **ARCH**  
+            Evalúa constancia de la varianza. p > 0.05 → Varianza constante.
+            ---
+            ✅ **Conclusión:**  
+            Un buen modelo presenta **MAPE bajo**, **AIC bajo** y todas las pruebas **JB, LB, ARCH > 0.05**.
+            """)
 else:
     st.info("👆 Sube un archivo CSV con tu serie mensual para comenzar el modelado.")
