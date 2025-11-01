@@ -1,6 +1,6 @@
 # ==============================================================
 # 🧠 Sistema Inteligente de Modelado del Precio de la Soya – SolverTic SRL
-# Versión 5.2 FINAL – SARIMAX + Machine Learning Avanzado
+# Versión 5.3 FINAL – SARIMAX + ML Avanzado + Sidebar restaurado
 # ==============================================================
 
 import os
@@ -22,7 +22,7 @@ from scipy import stats
 import warnings
 warnings.filterwarnings("ignore")
 
-# Librerías para la pestaña avanzada
+# Librerías para ML
 import plotly.graph_objects as go
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.ensemble import RandomForestRegressor
@@ -158,47 +158,88 @@ def buscar_modelos(train, test, pmax, qmax, Pmax, Qmax, periodo, include_fourier
 tab1, tab2 = st.tabs(["📊 Modelado SARIMAX Tradicional", "🤖 Machine Learning Avanzado"])
 
 # ==============================================================
-# TAB 1 – SARIMAX (evaluación completa restaurada)
+# TAB 1 – SARIMAX (con sidebar restaurado)
 # ==============================================================
 
 with tab1:
     st.title("🧠 Sistema Inteligente de Modelado del Precio de la Soya")
     st.caption("SolverTic SRL – División de Inteligencia Artificial y Modelado Predictivo")
 
-    file = st.file_uploader("Sube tu archivo CSV de precios mensuales", type=['csv'])
+    with st.sidebar:
+        st.header("📂 Cargar y Configurar")
+        file = st.file_uploader("Sube tu archivo CSV de precios mensuales", type=['csv'])
+        pmax = st.slider("Máx p/q", 1, 5, 3)
+        Pmax = st.slider("Máx P/Q (estacional)", 0, 3, 1)
+        include_fourier = st.checkbox("Incluir Fourier (SARIMAX)", value=True)
+        K_min, K_max = st.slider("Rango K Fourier", 1, 6, (1, 3))
+        periodo_estacional = st.number_input("Periodo estacional (meses)", 3, 24, 12)
+        test_size = st.slider("Meses para Test", 6, 36, 24)
+        fecha_inicio = st.date_input("Inicio de análisis", datetime.date(2010, 1, 1))
+        fecha_fin = st.date_input("Fin de análisis", datetime.date(2025, 5, 31))
+        winsor = st.checkbox("Capar outliers (winsorizar)", value=True)
+        st.caption("© 2025 SolverTic SRL – Ingeniería de Sistemas Inteligentes")
+
     if file:
         df = pd.read_csv(file)
         df.iloc[:, 0] = pd.to_datetime(df.iloc[:, 0])
         df = df.set_index(df.columns[0]).sort_index()
-        st.write("**Vista previa de datos:**")
-        st.dataframe(df.head())
+        serie = limpiar_serie(df.iloc[:, 0], winsor=winsor)
+        serie = serie.loc[(serie.index >= str(fecha_inicio)) & (serie.index <= str(fecha_fin))]
 
-        pmax = st.slider("Máx p/q", 1, 5, 3)
-        Pmax = st.slider("Máx P/Q (estacional)", 0, 3, 1)
-        include_fourier = st.checkbox("Incluir Fourier", value=True)
-        K_min, K_max = st.slider("Rango K Fourier", 1, 6, (1, 3))
-        periodo_estacional = st.number_input("Periodo estacional (meses)", 3, 24, 12)
-        test_size = st.slider("Meses para Test", 6, 36, 24)
-
-        serie = limpiar_serie(df.iloc[:, 0])
+        if len(serie) <= test_size:
+            test_size = max(1, len(serie)//5)
         train = serie[:-test_size]
         test = serie[-test_size:]
 
-        df_res, best = buscar_modelos(train, test, pmax, qmax=pmax, Pmax=Pmax, Qmax=Pmax,
-                                      periodo=periodo_estacional, include_fourier=include_fourier,
+        st.subheader("📈 Vista previa de datos")
+        st.line_chart(serie)
+        st.write(f"**Observaciones:** {len(serie)} | Train={len(train)} | Test={len(test)}")
+
+        df_res, best = buscar_modelos(train, test, pmax, qmax=pmax,
+                                      Pmax=Pmax, Qmax=Pmax,
+                                      periodo=periodo_estacional,
+                                      include_fourier=include_fourier,
                                       K_min=K_min, K_max=K_max)
+
         if df_res is not None:
             st.success("✅ Modelado completado exitosamente")
-            st.dataframe(df_res.sort_values("mape").head(10))
-            best["forecast"].plot(title="Pronóstico SARIMAX (mejor modelo)")
-            st.pyplot(plt.gcf())
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Mejor MAPE", f"{best['mape']:05.2f}%")
+            c2.metric("AIC", f"{best['aic']:05.2f}")
+            c3.metric("Modelos válidos", f"{df_res['valid'].sum()}/{len(df_res)}")
+
+            st.subheader("🏆 Top 10 modelos por MAPE")
+            tabla = df_res.sort_values('mape').head(10)[['order', 'seasonal', 'fourier_K', 'mape', 'aic']].copy()
+            tabla['mape'] = tabla['mape'].map(lambda x: f"{x:05.2f}")
+            tabla['aic'] = tabla['aic'].map(lambda x: f"{x:05.2f}")
+            st.dataframe(tabla)
+
+            fig, ax = plt.subplots()
+            ax.scatter(df_res['aic'], df_res['mape'], alpha=0.7, color='seagreen')
+            ax.set_xlabel('AIC'); ax.set_ylabel('MAPE (%)')
+            ax.set_title('Relación AIC vs MAPE')
+            st.pyplot(fig)
+
+            res_best = best['res']
+            fc = best['forecast']
+            resid_best = best['resid']
+            fig2, ax2 = plt.subplots(figsize=(10, 4))
+            train.plot(ax=ax2, label='Train')
+            test.plot(ax=ax2, label='Test')
+            fc.plot(ax=ax2, label='Pronóstico', color='red')
+            ax2.legend(); st.pyplot(fig2)
 
 # ==============================================================
-# TAB 2 – MACHINE LEARNING AVANZADO
+# TAB 2 – MACHINE LEARNING AVANZADO (sin sidebar)
 # ==============================================================
 
 with tab2:
     st.header("🤖 Modelos Avanzados de Machine Learning – SolverTic SRL")
+    st.markdown("""
+    Compara **XGBoost, Random Forest, SVM, Redes Neuronales (MLP)** y **Prophet**  
+    para pronóstico del precio de la soya (2009–2025).  
+    El modelo con menor **MAPE** será el mejor.
+    """)
 
     file_ml = st.file_uploader("📂 Subir archivo CSV con variables", type=["csv"], key="ml_file")
     if file_ml:
@@ -242,7 +283,7 @@ with tab2:
             st.dataframe(df_metrics)
             st.success(f"🏆 El mejor modelo es **{best_model}**.")
 
-            # Pronóstico futuro con corrección de columnas
+            # Pronóstico futuro
             horizon = 12
             fechas_futuras = pd.date_range(df.index[-1] + timedelta(days=30), periods=horizon, freq="M")
 
