@@ -1,6 +1,6 @@
 # ==============================================================
 # 🧠 Sistema Inteligente de Modelado del Precio de la Soya – SolverTic SRL
-# Versión 5.1 – Integración SARIMAX + Machine Learning Avanzado (Fix columnas XGBoost)
+# Versión 5.2 – SARIMAX + Machine Learning Avanzado (Totalmente Integrado)
 # ==============================================================
 
 import os
@@ -65,7 +65,7 @@ def theil_u2(y_true, y_pred):
     return np.sqrt(np.sum((y_pred - y_true)**2) / np.sum((y_true[1:] - y_true[:-1])**2))
 
 # ==============================================================
-# FUNCIÓN SARIMAX
+# FUNCIONES SARIMAX
 # ==============================================================
 
 def fit_model(y, order, seasonal_order, exog=None):
@@ -100,17 +100,65 @@ def fourier_terms(index, period=12, K=1):
         data[f'cos_{k}'] = np.cos(2 * np.pi * k * t / period)
     return pd.DataFrame(data, index=index)
 
+def buscar_modelos(train, test, pmax, qmax, Pmax, Qmax, periodo, include_fourier, K_min, K_max):
+    st.info("🔍 Buscando el mejor modelo... esto puede tardar unos segundos.")
+    results = []
+    d = select_differencing(train)
+    total = (pmax+1)*(qmax+1)*(Pmax+1)*(Qmax+1)
+    bar = st.progress(0)
+    combos = [(p, q, P, Q) for p in range(pmax+1)
+              for q in range(qmax+1)
+              for P in range(Pmax+1)
+              for Q in range(Qmax+1)]
+    for i, (p, q, P, Q) in enumerate(combos):
+        bar.progress(int((i+1)/total*100))
+        order = (p, d, q)
+        seasonal_order = (P, 1, Q, periodo)
+        try:
+            if include_fourier:
+                for K in range(K_min, K_max+1):
+                    Xtrain = fourier_terms(train.index, periodo, K)
+                    Xtest = fourier_terms(test.index, periodo, K)
+                    res = fit_model(train, order, seasonal_order, exog=Xtrain)
+                    if res is None:
+                        continue
+                    fc = res.get_forecast(steps=len(test), exog=Xtest).predicted_mean
+                    jb_p, lb_p, arch_p, resid = diagnosticos(res)
+                    results.append({
+                        'order': order, 'seasonal': seasonal_order,
+                        'fourier_K': K, 'aic': res.aic, 'mape': mape(test, fc),
+                        'jb_p': jb_p, 'lb_p': lb_p, 'arch_p': arch_p,
+                        'valid': (jb_p > 0.05) & (lb_p > 0.05) & (arch_p > 0.05),
+                        'res': res, 'forecast': fc, 'resid': resid})
+            else:
+                res = fit_model(train, order, seasonal_order)
+                if res is None:
+                    continue
+                fc = res.get_forecast(steps=len(test)).predicted_mean
+                jb_p, lb_p, arch_p, resid = diagnosticos(res)
+                results.append({
+                    'order': order, 'seasonal': seasonal_order,
+                    'fourier_K': None, 'aic': res.aic, 'mape': mape(test, fc),
+                    'jb_p': jb_p, 'lb_p': lb_p, 'arch_p': arch_p,
+                    'valid': (jb_p > 0.05) & (lb_p > 0.05) & (arch_p > 0.05),
+                    'res': res, 'forecast': fc, 'resid': resid})
+        except Exception:
+            continue
+    if not results:
+        st.warning("⚠️ No se encontraron modelos válidos.")
+        return None, None
+    df = pd.DataFrame(results)
+    best = df.sort_values(['valid', 'mape', 'aic'], ascending=[False, True, True]).iloc[0]
+    return df, best
+
 # ==============================================================
 # INTERFAZ CON TABS
 # ==============================================================
 
-tab1, tab2 = st.tabs([
-    "📊 Modelado SARIMAX Tradicional",
-    "🤖 Machine Learning Avanzado"
-])
+tab1, tab2 = st.tabs(["📊 Modelado SARIMAX Tradicional", "🤖 Machine Learning Avanzado"])
 
 # ==============================================================
-# TAB 1 – SARIMAX
+# TAB 1 – SARIMAX (restaurado con evaluación completa)
 # ==============================================================
 
 with tab1:
@@ -144,7 +192,39 @@ with tab1:
 
         st.subheader("📈 Vista previa de datos")
         st.line_chart(serie)
-        st.write(f"**Observaciones:** {len(serie)} | Train={len(train)} | Test={len(test)}")
+
+        df_res, best = buscar_modelos(train, test, pmax, qmax=pmax, Pmax=Pmax, Qmax=Pmax,
+                                      periodo=periodo_estacional, include_fourier=include_fourier,
+                                      K_min=K_min, K_max=K_max)
+
+        if df_res is not None:
+            st.success("✅ Modelado completado exitosamente")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Mejor MAPE", f"{best['mape']:05.2f}%")
+            c2.metric("AIC", f"{best['aic']:05.2f}")
+            c3.metric("Modelos válidos", f"{df_res['valid'].sum()}/{len(df_res)}")
+
+            st.subheader("🏆 Top 10 modelos por MAPE")
+            tabla = df_res.sort_values('mape').head(10)[['order', 'seasonal', 'fourier_K', 'mape', 'aic']]
+            tabla['mape'] = tabla['mape'].map(lambda x: f"{x:05.2f}")
+            tabla['aic'] = tabla['aic'].map(lambda x: f"{x:05.2f}")
+            st.dataframe(tabla)
+
+            fig, ax = plt.subplots()
+            ax.scatter(df_res['aic'], df_res['mape'], alpha=0.7, color='seagreen')
+            ax.set_xlabel('AIC'); ax.set_ylabel('MAPE (%)')
+            ax.set_title('Relación AIC vs MAPE')
+            st.pyplot(fig)
+
+            res_best = best['res']
+            fc = best['forecast']
+            resid_best = best['resid']
+
+            fig2, ax2 = plt.subplots(figsize=(10, 4))
+            train.plot(ax=ax2, label='Train')
+            test.plot(ax=ax2, label='Test')
+            fc.plot(ax=ax2, label='Pronóstico', color='red')
+            ax2.legend(); st.pyplot(fig2)
 
 # ==============================================================
 # TAB 2 – MACHINE LEARNING AVANZADO
@@ -153,9 +233,9 @@ with tab1:
 with tab2:
     st.header("🤖 Modelos Avanzados de Machine Learning – SolverTic SRL")
     st.markdown("""
-    Se comparan **XGBoost, Random Forest, SVM, Redes Neuronales (MLP)** y **Prophet**  
-    para el pronóstico del precio de la soya (2009–2025).  
-    El modelo con menor **MAPE** en el 20% final de los datos será el mejor.
+    Compara **XGBoost, Random Forest, SVM, Redes Neuronales (MLP)** y **Prophet**  
+    para pronóstico del precio de la soya (2009–2025).  
+    El modelo con menor **MAPE** será el mejor.
     """)
 
     file_ml = st.file_uploader("📂 Subir archivo CSV con variables", type=["csv"], key="ml_file")
@@ -166,7 +246,7 @@ with tab2:
         st.write("**Vista previa de datos:**")
         st.dataframe(df.head())
 
-        col_obj = st.selectbox("🎯 Variable objetivo (por ejemplo: Precio de Soya)", df.columns)
+        col_obj = st.selectbox("🎯 Variable objetivo", df.columns)
         exog_cols = st.multiselect("📈 Variables exógenas (opcionales)", [c for c in df.columns if c != col_obj])
 
         if st.button("🚀 Ejecutar Modelado Machine Learning"):
@@ -189,7 +269,6 @@ with tab2:
                 model.fit(X_train, y_train)
                 resultados[name] = model.predict(X_test)
 
-            # Prophet
             df_prophet = pd.DataFrame({"ds": df.index, "y": y.values})
             model_prophet = Prophet(yearly_seasonality=True)
             model_prophet.fit(df_prophet.iloc[:-test_size])
@@ -197,7 +276,7 @@ with tab2:
             pred_prophet = model_prophet.predict(future)["yhat"].iloc[-test_size:].values
             resultados["Prophet"] = pred_prophet
 
-            # Evaluación
+            # Métricas
             metrics = []
             for name, y_pred in resultados.items():
                 rmse = math.sqrt(mean_squared_error(y_test, y_pred))
@@ -227,25 +306,17 @@ with tab2:
             fig.update_layout(title="Comparación de Predicciones", xaxis_title="Fecha", yaxis_title="Precio (USD/TM)")
             st.plotly_chart(fig, use_container_width=True)
 
-            # ==============================================================
-            # 🔮 Pronóstico futuro (Fix feature_names)
-            # ==============================================================
-
+            # 🔮 Pronóstico futuro (fix columnas)
             st.subheader("🔮 Pronóstico Junio 2025 – Mayo 2026")
             horizon = 12
             fechas_futuras = pd.date_range(df.index[-1] + timedelta(days=30), periods=horizon, freq="M")
 
             if best_model != "Prophet":
                 model_best = modelos[best_model]
-
                 if exog_cols:
-                    X_future = pd.DataFrame(
-                        np.tile(X.iloc[-1].values, (horizon, 1)),
-                        columns=X.columns
-                    )
+                    X_future = pd.DataFrame(np.tile(X.iloc[-1].values, (horizon, 1)), columns=X.columns)
                 else:
                     X_future = pd.DataFrame(np.arange(len(df), len(df) + horizon), columns=X.columns)
-
                 pred_future = model_best.predict(X_future)
             else:
                 future2 = model_prophet.make_future_dataframe(periods=horizon, freq="M")
@@ -254,7 +325,4 @@ with tab2:
             fig2 = go.Figure()
             fig2.add_trace(go.Scatter(x=df.index, y=y, name="Histórico", line=dict(color="#2E8B57")))
             fig2.add_trace(go.Scatter(x=fechas_futuras, y=pred_future, name=f"Pronóstico {best_model}", line=dict(color="red", width=3)))
-            fig2.update_layout(title="Pronóstico a 12 meses", xaxis_title="Fecha", yaxis_title="Precio proyectado (USD/TM)", template="plotly_white")
-            st.plotly_chart(fig2, use_container_width=True)
-    else:
-        st.info("👆 Sube un archivo CSV para iniciar el modelado de Machine Learning Avanzado.")
+            fig2.update_layout(title="Pronóstico a 12 meses", xaxis_title="Fecha", yaxis_title="Precio proyectado (USD/TM)", template
