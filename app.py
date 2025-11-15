@@ -1,6 +1,6 @@
 # ==============================================================
 # 🧠 SolverTic SoyAI Predictor – Sistema Inteligente de Modelado del Precio de la Soya
-# Versión 6.3 – Visual Fit Pro (Evaluación del Ajuste + Serie Completa)
+# Versión 6.4 – Visual Fit Pro (Serie Completa + Evaluación y Pronóstico punteados)
 # ==============================================================
 
 import os
@@ -19,12 +19,10 @@ from sklearn.preprocessing import RobustScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.svm import SVR
-from sklearn.neural_network import MLPRegressor
 from xgboost import XGBRegressor
 from prophet import Prophet
 from prophet.models import StanBackendEnum
 Prophet.stan_backend = StanBackendEnum.CMDSTANPY
-from sklearn.model_selection import TimeSeriesSplit
 import plotly.graph_objects as go
 import math
 from io import BytesIO
@@ -46,8 +44,8 @@ def mape(y_true, y_pred):
 # INTERFAZ PRINCIPAL
 # ==============================================================
 
-st.title("🌾 SolverTic SoyAI Predictor – Visual Fit Pro v6.3")
-st.caption("Visualización detallada del ajuste real del modelo ganador en la muestra de evaluación + pronóstico 12 meses")
+st.title("🌾 SolverTic SoyAI Predictor – Visual Fit Pro v6.4")
+st.caption("Visualización completa del ajuste real del modelo ganador en la muestra de evaluación y pronóstico futuro a 12 meses")
 
 file_ml = st.file_uploader("📂 Sube tu archivo CSV (Fecha, Precio, Aceite, Harina, etc.)", type=["csv"])
 
@@ -118,7 +116,7 @@ if file_ml:
     resultados["Prophet"] = model_prophet.predict(future)["yhat"].iloc[-test_size:].values
 
     # ==============================================================
-    # Métricas y mejor modelo
+    # Selección del mejor modelo
     # ==============================================================
 
     mape_scores = {name: mape(y_test, pred) for name, pred in resultados.items()}
@@ -143,41 +141,43 @@ if file_ml:
     y_future = scalerY.inverse_transform(y_future_s.reshape(-1, 1)).ravel()
 
     # ==============================================================
-    # 📊 GRAFICO COMPLETO: REAL + EVALUACIÓN + PRONÓSTICO
+    # 📊 GRAFICO COMPLETO: REAL + EVALUACIÓN (punteada) + PRONÓSTICO
     # ==============================================================
 
-    st.subheader("📈 Serie completa: Datos reales, evaluación y pronóstico")
+    st.subheader("📈 Serie completa: Datos reales, evaluación (punteada) y pronóstico")
 
     serie_real = pd.Series(y, index=df.index, name="Precio Real")
-    serie_pred_test = pd.Series(resultados[best_model], index=y_test.index, name=f"Predicción {best_model}")
-    serie_forecast = pd.Series(y_future, index=fechas_futuras, name="Pronóstico Futuro (12M)")
+    serie_pred_test = pd.Series(resultados[best_model], index=y_test.index, name=f"Ajuste ({best_model})")
+    serie_forecast = pd.Series(y_future, index=fechas_futuras, name="Pronóstico 12M")
 
     fig = go.Figure()
 
-    # Datos históricos
+    # Datos reales
     fig.add_trace(go.Scatter(
         x=serie_real.index, y=serie_real.values,
-        mode="lines", name="Datos Reales", line=dict(color="black", width=2)
+        mode="lines", name="Datos Reales",
+        line=dict(color="black", width=2)
     ))
 
-    # Evaluación (predicción vs real)
+    # Ajuste en evaluación (línea punteada)
     fig.add_trace(go.Scatter(
         x=serie_pred_test.index, y=serie_pred_test.values,
         mode="lines+markers", name=f"Ajuste en Evaluación ({best_model})",
-        line=dict(color="orange", width=3), marker=dict(size=5, color="orange")
+        line=dict(color="orange", width=3, dash="dot"),
+        marker=dict(size=5, color="orange")
     ))
 
-    # Pronóstico futuro
+    # Pronóstico futuro (línea punteada)
     fig.add_trace(go.Scatter(
         x=serie_forecast.index, y=serie_forecast.values,
         mode="lines+markers", name="Pronóstico 12M",
-        line=dict(color="green", dash="dot", width=3), marker=dict(size=5, color="green")
+        line=dict(color="green", dash="dot", width=3),
+        marker=dict(size=5, color="green")
     ))
 
-    # Configuración visual
     fig.update_layout(
         template="plotly_white",
-        title=f"Evolución del Precio de la Soya – {best_model}: Ajuste y Pronóstico",
+        title=f"Evolución del Precio de la Soya – {best_model}: Ajuste y Pronóstico (punteados)",
         xaxis_title="Fecha",
         yaxis_title="Precio (USD/TM)",
         legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
