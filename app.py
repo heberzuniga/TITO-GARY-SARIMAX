@@ -1,6 +1,6 @@
 # ==============================================================
 # 🧠 SolverTic SoyAI Predictor – Sistema Inteligente de Modelado del Precio de la Soya
-# Versión 6.0 – Precision Pro (<3% MAPE)
+# Versión 6.1 – Precision Pro + Verificación de Variables Exógenas
 # ==============================================================
 
 import os
@@ -11,7 +11,6 @@ st.set_page_config(page_title="SolverTic SoyAI Predictor – Precision Pro", lay
 
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from datetime import timedelta
 import warnings
 warnings.filterwarnings("ignore")
@@ -60,8 +59,8 @@ def theil_u2(y_true, y_pred):
 # INTERFAZ PRINCIPAL
 # ==============================================================
 
-st.title("🌾 SolverTic SoyAI Predictor – Precision Pro v6.0")
-st.caption("Optimización total: lags extendidos + tuning XGBoost + RobustScaler + validación cruzada temporal")
+st.title("🌾 SolverTic SoyAI Predictor – Precision Pro v6.1")
+st.caption("Optimización total: lags extendidos + tuning XGBoost + RobustScaler + validación cruzada temporal + verificación exógenas")
 
 file_ml = st.file_uploader("📂 Sube tu archivo CSV con variables (Fecha, Precio, Aceite, Harina, etc.)", type=["csv"])
 
@@ -169,6 +168,20 @@ if file_ml:
     st.success(f"🏆 Mejor modelo: **{best_model}** con MAPE = {df_metrics['MAPE'].min():.2f}%")
 
     # ==============================================================
+    # 🔍 Verificación de variables exógenas utilizadas
+    # ==============================================================
+
+    st.subheader("🧾 Variables utilizadas en el modelo")
+    st.write("**Variables exógenas seleccionadas:**", exog_cols if exog_cols else "Ninguna (solo precio histórico)")
+    st.write(f"**Total de columnas (features) generadas:** {len(X.columns)}")
+
+    st.write("**Últimas 5 observaciones del conjunto X (usadas en entrenamiento/test):**")
+    st.dataframe(X.tail(5).style.format("{:.3f}"))
+
+    st.write("**Valores de entrada del último mes (base del pronóstico):**")
+    st.dataframe(X.tail(1).T.style.format("{:.3f}"))
+
+    # ==============================================================
     # Visualización de predicciones
     # ==============================================================
 
@@ -181,22 +194,7 @@ if file_ml:
     st.plotly_chart(fig, use_container_width=True)
 
     # ==============================================================
-    # Validación cruzada (SVM)
-    # ==============================================================
-
-    tscv = TimeSeriesSplit(n_splits=3)
-    svr = SVR(kernel="rbf", C=15, epsilon=0.05, gamma=0.05)
-    scores = []
-    for train_idx, test_idx in tscv.split(X_train_s):
-        svr.fit(X_train_s[train_idx], y_train_s[train_idx])
-        y_pred_val = svr.predict(X_train_s[test_idx])
-        y_pred_inv = scalerY.inverse_transform(y_pred_val.reshape(-1, 1)).ravel()
-        y_true_inv = scalerY.inverse_transform(y_train_s[test_idx].reshape(-1, 1)).ravel()
-        scores.append(mape(y_true_inv, y_pred_inv))
-    st.info(f"📉 MAPE promedio validación cruzada (SVM Optimizado): {np.mean(scores):.2f}%")
-
-    # ==============================================================
-    # Pronóstico futuro 12 meses (SVM + Ensemble)
+    # Pronóstico Futuro 12 Meses
     # ==============================================================
 
     st.subheader("🔮 Pronóstico Futuro (12 meses) – SVM + Ensemble")
@@ -212,7 +210,7 @@ if file_ml:
     y_future_svm_s = modelos["SVM (Optimizado)"].predict(X_future_s)
     y_future_svm = scalerY.inverse_transform(y_future_svm_s.reshape(-1, 1)).ravel()
 
-    # Ensemble automático basado en MAPE
+    # Ensemble Automático
     pesos = 1 / df_metrics["MAPE"]
     pesos /= pesos.sum()
     modelos_ordenados = df_metrics["Modelo"].tolist()
