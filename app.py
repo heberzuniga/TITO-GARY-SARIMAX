@@ -1,13 +1,13 @@
 # ==============================================================
 # 🧠 SolverTic SoyAI Predictor – Sistema Inteligente de Modelado del Precio de la Soya
-# Versión 6.4 – Visual Fit Pro (Serie Completa + Evaluación y Pronóstico punteados)
+# Versión 6.5 – Periodos Divididos + Tabla Comparativa
 # ==============================================================
 
 import os
 os.environ["MPLCONFIGDIR"] = "/tmp/matplotlib"
 
 import streamlit as st
-st.set_page_config(page_title="SolverTic SoyAI Predictor – Visual Fit Pro", layout="wide")
+st.set_page_config(page_title="SolverTic SoyAI Predictor – Periodos Divididos", layout="wide")
 
 import pandas as pd
 import numpy as np
@@ -44,8 +44,8 @@ def mape(y_true, y_pred):
 # INTERFAZ PRINCIPAL
 # ==============================================================
 
-st.title("🌾 SolverTic SoyAI Predictor – Visual Fit Pro v6.4")
-st.caption("Visualización completa del ajuste real del modelo ganador en la muestra de evaluación y pronóstico futuro a 12 meses")
+st.title("🌾 SolverTic SoyAI Predictor – Visualización por Periodos v6.5")
+st.caption("División clara de periodos: entrenamiento, evaluación y pronóstico con líneas punteadas + tabla comparativa del modelo ganador")
 
 file_ml = st.file_uploader("📂 Sube tu archivo CSV (Fecha, Precio, Aceite, Harina, etc.)", type=["csv"])
 
@@ -53,9 +53,6 @@ if file_ml:
     df = pd.read_csv(file_ml)
     df.iloc[:, 0] = pd.to_datetime(df.iloc[:, 0])
     df = df.set_index(df.columns[0]).sort_index()
-
-    st.write("**Vista previa de datos:**")
-    st.dataframe(df.head())
 
     col_obj = st.selectbox("🎯 Variable objetivo (precio a predecir)", df.columns)
     exog_cols = st.multiselect("📈 Variables exógenas (opcional)", [c for c in df.columns if c != col_obj])
@@ -109,12 +106,6 @@ if file_ml:
         y_pred = scalerY.inverse_transform(y_pred_s.reshape(-1, 1)).ravel()
         resultados[name] = y_pred
 
-    df_prophet = pd.DataFrame({"ds": df.index, "y": y.values})
-    model_prophet = Prophet(yearly_seasonality=True)
-    model_prophet.fit(df_prophet.iloc[:-test_size])
-    future = model_prophet.make_future_dataframe(periods=test_size, freq="M")
-    resultados["Prophet"] = model_prophet.predict(future)["yhat"].iloc[-test_size:].values
-
     # ==============================================================
     # Selección del mejor modelo
     # ==============================================================
@@ -131,7 +122,6 @@ if file_ml:
 
     horizon = 12
     fechas_futuras = pd.date_range(df.index[-1] + timedelta(days=30), periods=horizon, freq="M")
-
     ultima_fila = X.iloc[-1:].copy()
     X_future = pd.concat([ultima_fila] * horizon, ignore_index=True)
     X_future.index = fechas_futuras
@@ -141,33 +131,41 @@ if file_ml:
     y_future = scalerY.inverse_transform(y_future_s.reshape(-1, 1)).ravel()
 
     # ==============================================================
-    # 📊 GRAFICO COMPLETO: REAL + EVALUACIÓN (punteada) + PRONÓSTICO
+    # 📊 GRAFICO COMPLETO CON PERIODOS DIVIDIDOS
     # ==============================================================
 
-    st.subheader("📈 Serie completa: Datos reales, evaluación (punteada) y pronóstico")
+    st.subheader("📈 Serie completa: Entrenamiento, Evaluación y Pronóstico")
 
-    serie_real = pd.Series(y, index=df.index, name="Precio Real")
-    serie_pred_test = pd.Series(resultados[best_model], index=y_test.index, name=f"Ajuste ({best_model})")
-    serie_forecast = pd.Series(y_future, index=fechas_futuras, name="Pronóstico 12M")
+    serie_train = pd.Series(y_train.values, index=y_train.index, name="Entrenamiento")
+    serie_test_real = pd.Series(y_test.values, index=y_test.index, name="Evaluación Real")
+    serie_test_pred = pd.Series(resultados[best_model], index=y_test.index, name=f"Evaluación Predicha ({best_model})")
+    serie_forecast = pd.Series(y_future, index=fechas_futuras, name="Pronóstico Futuro (12M)")
 
     fig = go.Figure()
 
-    # Datos reales
+    # Entrenamiento
     fig.add_trace(go.Scatter(
-        x=serie_real.index, y=serie_real.values,
-        mode="lines", name="Datos Reales",
+        x=serie_train.index, y=serie_train.values,
+        mode="lines", name="Entrenamiento (Real)",
         line=dict(color="black", width=2)
     ))
 
-    # Ajuste en evaluación (línea punteada)
+    # Evaluación real
     fig.add_trace(go.Scatter(
-        x=serie_pred_test.index, y=serie_pred_test.values,
-        mode="lines+markers", name=f"Ajuste en Evaluación ({best_model})",
+        x=serie_test_real.index, y=serie_test_real.values,
+        mode="lines", name="Evaluación (Real)",
+        line=dict(color="gray", width=2)
+    ))
+
+    # Evaluación predicha (línea punteada naranja)
+    fig.add_trace(go.Scatter(
+        x=serie_test_pred.index, y=serie_test_pred.values,
+        mode="lines+markers", name=f"Ajuste del Modelo ({best_model})",
         line=dict(color="orange", width=3, dash="dot"),
         marker=dict(size=5, color="orange")
     ))
 
-    # Pronóstico futuro (línea punteada)
+    # Pronóstico futuro (línea punteada verde)
     fig.add_trace(go.Scatter(
         x=serie_forecast.index, y=serie_forecast.values,
         mode="lines+markers", name="Pronóstico 12M",
@@ -175,16 +173,37 @@ if file_ml:
         marker=dict(size=5, color="green")
     ))
 
+    # Líneas verticales para dividir periodos
+    fig.add_vline(x=y_train.index[-1], line_dash="dash", line_color="black",
+                  annotation_text="Fin Entrenamiento", annotation_position="top right")
+    fig.add_vline(x=y_test.index[-1], line_dash="dash", line_color="gray",
+                  annotation_text="Fin Evaluación", annotation_position="top right")
+
     fig.update_layout(
         template="plotly_white",
-        title=f"Evolución del Precio de la Soya – {best_model}: Ajuste y Pronóstico (punteados)",
+        title=f"Evolución del Precio de la Soya – {best_model}: Entrenamiento, Evaluación y Pronóstico",
         xaxis_title="Fecha",
         yaxis_title="Precio (USD/TM)",
         legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
         hovermode="x unified"
     )
-
     st.plotly_chart(fig, use_container_width=True)
+
+    # ==============================================================
+    # 📋 TABLA DE COMPARACIÓN REAL VS PREDICHO EN EVALUACIÓN
+    # ==============================================================
+
+    st.subheader("📋 Comparación: Real vs Predicho en Muestra de Evaluación")
+
+    df_eval = pd.DataFrame({
+        "Fecha": y_test.index,
+        "Real": y_test.values,
+        f"Predicho ({best_model})": resultados[best_model],
+    })
+    df_eval["Error (%)"] = np.abs((df_eval["Real"] - df_eval[f"Predicho ({best_model})"]) / df_eval["Real"]) * 100
+    st.dataframe(df_eval.style.format({"Real": "{:.2f}", f"Predicho ({best_model})": "{:.2f}", "Error (%)": "{:.2f}"}))
+
+    st.caption("📈 Esta tabla muestra los valores reales vs los predichos por el modelo ganador en la muestra de evaluación, junto con su error porcentual mes a mes.")
 
     # ==============================================================
     # Descarga Excel
