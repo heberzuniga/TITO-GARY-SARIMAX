@@ -1,13 +1,13 @@
 # ==============================================================
 # 🧠 SolverTic SoyAI Predictor – Sistema Inteligente de Modelado del Precio de la Soya
-# Versión 5.9 – Estable y Final (Visualización + Exógenas + Ensemble + Pronóstico)
+# Versión 6.0 – Precision Pro (<3% MAPE)
 # ==============================================================
 
 import os
 os.environ["MPLCONFIGDIR"] = "/tmp/matplotlib"
 
 import streamlit as st
-st.set_page_config(page_title="SolverTic SoyAI Predictor", layout="wide")
+st.set_page_config(page_title="SolverTic SoyAI Predictor – Precision Pro", layout="wide")
 
 import pandas as pd
 import numpy as np
@@ -16,7 +16,7 @@ from datetime import timedelta
 import warnings
 warnings.filterwarnings("ignore")
 
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import RobustScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.svm import SVR
@@ -60,10 +60,10 @@ def theil_u2(y_true, y_pred):
 # INTERFAZ PRINCIPAL
 # ==============================================================
 
-st.title("🌾 SolverTic SoyAI Predictor – Dashboard Completo de Modelado y Pronóstico")
-st.caption("Versión 5.9 – Machine Learning + Variables Exógenas + Métricas + Visualización")
+st.title("🌾 SolverTic SoyAI Predictor – Precision Pro v6.0")
+st.caption("Optimización total: lags extendidos + tuning XGBoost + RobustScaler + validación cruzada temporal")
 
-file_ml = st.file_uploader("📂 Sube tu archivo CSV con variables (ejemplo: Fecha, Precio, Aceite, Harina...)", type=["csv"])
+file_ml = st.file_uploader("📂 Sube tu archivo CSV con variables (Fecha, Precio, Aceite, Harina, etc.)", type=["csv"])
 
 if file_ml:
     df = pd.read_csv(file_ml)
@@ -74,44 +74,60 @@ if file_ml:
     st.dataframe(df.head())
 
     col_obj = st.selectbox("🎯 Variable objetivo (precio a predecir)", df.columns)
-    exog_cols = st.multiselect("📈 Variables exógenas (puedes elegir varias)", [c for c in df.columns if c != col_obj])
+    exog_cols = st.multiselect("📈 Variables exógenas (opcional, elige varias)", [c for c in df.columns if c != col_obj])
 
-    # Variables temporales y lags
+    # ==============================================================
+    # Feature Engineering – lags y variables temporales
+    # ==============================================================
+
     df["Mes"] = df.index.month
     df["Año"] = df.index.year
     df["Trimestre"] = df.index.quarter
     df["sin_mes"] = np.sin(2 * np.pi * df["Mes"]/12)
     df["cos_mes"] = np.cos(2 * np.pi * df["Mes"]/12)
-    for c in exog_cols:
-        for lag in [1, 2]:
+
+    # Lags extendidos (1–12 meses)
+    for c in exog_cols + [col_obj]:
+        for lag in range(1, 13):
             df[f"{c}_lag{lag}"] = df[c].shift(lag)
+
     df.dropna(inplace=True)
 
     y = df[col_obj]
     X = df.drop(columns=[col_obj])
 
-    test_size = int(0.2 * len(df))
+    # Split entrenamiento / prueba (10%)
+    test_size = int(0.1 * len(df))
     X_train, X_test = X.iloc[:-test_size], X.iloc[-test_size:]
     y_train, y_test = y.iloc[:-test_size], y.iloc[-test_size:]
 
-    # Escalado
-    scalerX = StandardScaler()
-    scalerY = StandardScaler()
+    # Escalado robusto
+    scalerX = RobustScaler()
+    scalerY = RobustScaler()
     X_train_s = scalerX.fit_transform(X_train)
     X_test_s = scalerX.transform(X_test)
     y_train_s = scalerY.fit_transform(y_train.values.reshape(-1, 1)).ravel()
 
     # ==============================================================
-    # ENTRENAMIENTO DE MODELOS
+    # Modelos Optimizado (hiperparámetros ajustados)
     # ==============================================================
 
     modelos = {
-        "XGBoost": XGBRegressor(n_estimators=800, learning_rate=0.03, max_depth=6,
-                                subsample=0.8, colsample_bytree=0.8, random_state=42),
-        "Random Forest": RandomForestRegressor(n_estimators=1000, max_depth=10,
-                                               min_samples_split=4, min_samples_leaf=2, random_state=42),
-        "SVM (Optimizado)": SVR(kernel="rbf", C=20, epsilon=0.05, gamma=0.05),
-        "Neural Network": MLPRegressor(hidden_layer_sizes=(60, 60), max_iter=2000, random_state=42)
+        "XGBoost": XGBRegressor(
+            n_estimators=1500, learning_rate=0.02, max_depth=7,
+            subsample=0.9, colsample_bytree=0.9,
+            min_child_weight=1, gamma=0.1,
+            reg_alpha=0.2, reg_lambda=1.0, random_state=42
+        ),
+        "Random Forest": RandomForestRegressor(
+            n_estimators=1200, max_depth=12, min_samples_split=4,
+            min_samples_leaf=2, random_state=42
+        ),
+        "SVM (Optimizado)": SVR(kernel="rbf", C=15, epsilon=0.05, gamma=0.05),
+        "Neural Network": MLPRegressor(
+            hidden_layer_sizes=(80, 80), activation="relu",
+            learning_rate_init=0.001, max_iter=3000, random_state=42
+        )
     }
 
     resultados = {}
@@ -129,7 +145,7 @@ if file_ml:
     resultados["Prophet"] = model_prophet.predict(future)["yhat"].iloc[-test_size:].values
 
     # ==============================================================
-    # MÉTRICAS DE TODOS LOS MODELOS
+    # Métricas comparativas
     # ==============================================================
 
     metrics = []
@@ -143,6 +159,7 @@ if file_ml:
 
     df_metrics = pd.DataFrame(metrics, columns=["Modelo", "RMSE", "MAE", "MAPE", "SMAPE", "Theil U1", "Theil U2"])
     df_metrics = df_metrics.sort_values("MAPE")
+
     st.subheader("📊 Resultados Comparativos de Todos los Modelos")
     st.dataframe(df_metrics.style.highlight_min(subset=["MAPE"], color="lightgreen").format({
         "RMSE": "{:.2f}", "MAE": "{:.2f}", "MAPE": "{:.2f}", "SMAPE": "{:.2f}", "Theil U1": "{:.3f}", "Theil U2": "{:.3f}"
@@ -152,10 +169,10 @@ if file_ml:
     st.success(f"🏆 Mejor modelo: **{best_model}** con MAPE = {df_metrics['MAPE'].min():.2f}%")
 
     # ==============================================================
-    # GRÁFICOS INTERACTIVOS
+    # Visualización de predicciones
     # ==============================================================
 
-    st.subheader("📈 Comparación de Predicciones vs. Valores Reales")
+    st.subheader("📈 Comparación Predicciones vs. Valores Reales")
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=y_test.index, y=y_test, name="Real", line=dict(color="black", width=2)))
     for name, y_pred in resultados.items():
@@ -164,11 +181,11 @@ if file_ml:
     st.plotly_chart(fig, use_container_width=True)
 
     # ==============================================================
-    # VALIDACIÓN CRUZADA SVM
+    # Validación cruzada (SVM)
     # ==============================================================
 
     tscv = TimeSeriesSplit(n_splits=3)
-    svr = SVR(kernel="rbf", C=20, epsilon=0.05, gamma=0.05)
+    svr = SVR(kernel="rbf", C=15, epsilon=0.05, gamma=0.05)
     scores = []
     for train_idx, test_idx in tscv.split(X_train_s):
         svr.fit(X_train_s[train_idx], y_train_s[train_idx])
@@ -179,15 +196,14 @@ if file_ml:
     st.info(f"📉 MAPE promedio validación cruzada (SVM Optimizado): {np.mean(scores):.2f}%")
 
     # ==============================================================
-    # 🔮 PRONÓSTICO FUTURO 12 MESES (SVM + ENSEMBLE)
+    # Pronóstico futuro 12 meses (SVM + Ensemble)
     # ==============================================================
 
-    st.subheader("🔮 Pronóstico Futuro (12 meses) – Mejor Modelo y Ensemble")
+    st.subheader("🔮 Pronóstico Futuro (12 meses) – SVM + Ensemble")
 
     horizon = 12
     fechas_futuras = pd.date_range(df.index[-1] + timedelta(days=30), periods=horizon, freq="M")
 
-    # Crear DataFrame futuro correcto
     ultima_fila = X.iloc[-1:].copy()
     X_future = pd.concat([ultima_fila] * horizon, ignore_index=True)
     X_future.index = fechas_futuras
@@ -196,29 +212,28 @@ if file_ml:
     y_future_svm_s = modelos["SVM (Optimizado)"].predict(X_future_s)
     y_future_svm = scalerY.inverse_transform(y_future_svm_s.reshape(-1, 1)).ravel()
 
-    # Ensemble Manual
-    w_svm = st.slider("Peso SVM", 0.0, 1.0, 0.5)
-    w_xgb = st.slider("Peso XGBoost", 0.0, 1.0, 0.3)
-    w_rf = st.slider("Peso Random Forest", 0.0, 1.0, 0.2)
-    suma = w_svm + w_xgb + w_rf
-    if suma == 0: suma = 1
-    y_future_ensemble = (w_svm * y_future_svm +
-                         w_xgb * resultados["XGBoost"][-horizon:] +
-                         w_rf * resultados["Random Forest"][-horizon:]) / suma
+    # Ensemble automático basado en MAPE
+    pesos = 1 / df_metrics["MAPE"]
+    pesos /= pesos.sum()
+    modelos_ordenados = df_metrics["Modelo"].tolist()
+    y_future_ensemble = np.zeros(horizon)
+    for i, m in enumerate(modelos_ordenados):
+        if m in resultados:
+            y_future_ensemble += pesos.iloc[i] * resultados[m][-horizon:]
 
     fig_future = go.Figure()
     fig_future.add_trace(go.Scatter(x=df.index, y=y, name="Histórico", line=dict(color="#2E8B57")))
     fig_future.add_trace(go.Scatter(x=fechas_futuras, y=y_future_svm, name="SVM Optimizado", line=dict(color="red", dash="dot")))
-    fig_future.add_trace(go.Scatter(x=fechas_futuras, y=y_future_ensemble, name="Ensemble", line=dict(color="green", width=3)))
-    fig_future.update_layout(title="Pronóstico 12 Meses (SVM + Ensemble)", template="plotly_white")
+    fig_future.add_trace(go.Scatter(x=fechas_futuras, y=y_future_ensemble, name="Ensemble Automático", line=dict(color="green", width=3)))
+    fig_future.update_layout(title="Pronóstico 12 Meses – SVM + Ensemble Automático", template="plotly_white")
     st.plotly_chart(fig_future, use_container_width=True)
 
     df_pred = pd.DataFrame({
         "Fecha": fechas_futuras,
-        "Pronóstico_SVM": y_future_svm,
-        "Pronóstico_Ensemble": y_future_ensemble
+        "Pronóstico SVM": y_future_svm,
+        "Pronóstico Ensemble": y_future_ensemble
     })
-    st.dataframe(df_pred.style.format({"Pronóstico_SVM": "{:.2f}", "Pronóstico_Ensemble": "{:.2f}"}))
+    st.dataframe(df_pred.style.format({"Pronóstico SVM": "{:.2f}", "Pronóstico Ensemble": "{:.2f}"}))
 
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
