@@ -1,6 +1,6 @@
 # ==============================================================
 # 🧠 SolverTic SoyAI Predictor – Sistema Inteligente de Modelado del Precio de la Soya
-# Versión 6.5 – Periodos Divididos + Tabla Comparativa
+# Versión 6.5.1 – Periodos Divididos + Barras de Error + Corrección add_vline
 # ==============================================================
 
 import os
@@ -44,8 +44,8 @@ def mape(y_true, y_pred):
 # INTERFAZ PRINCIPAL
 # ==============================================================
 
-st.title("🌾 SolverTic SoyAI Predictor – Visualización por Periodos v6.5")
-st.caption("División clara de periodos: entrenamiento, evaluación y pronóstico con líneas punteadas + tabla comparativa del modelo ganador")
+st.title("🌾 SolverTic SoyAI Predictor – Visualización por Periodos v6.5.1")
+st.caption("Entrenamiento, evaluación y pronóstico claramente divididos con barras de error visuales y tabla comparativa")
 
 file_ml = st.file_uploader("📂 Sube tu archivo CSV (Fecha, Precio, Aceite, Harina, etc.)", type=["csv"])
 
@@ -131,15 +131,17 @@ if file_ml:
     y_future = scalerY.inverse_transform(y_future_s.reshape(-1, 1)).ravel()
 
     # ==============================================================
-    # 📊 GRAFICO COMPLETO CON PERIODOS DIVIDIDOS
+    # 📊 GRAFICO COMPLETO CON PERIODOS Y BARRAS DE ERROR
     # ==============================================================
 
-    st.subheader("📈 Serie completa: Entrenamiento, Evaluación y Pronóstico")
+    st.subheader("📈 Serie completa: Entrenamiento, Evaluación (con barras de error) y Pronóstico")
 
     serie_train = pd.Series(y_train.values, index=y_train.index, name="Entrenamiento")
     serie_test_real = pd.Series(y_test.values, index=y_test.index, name="Evaluación Real")
     serie_test_pred = pd.Series(resultados[best_model], index=y_test.index, name=f"Evaluación Predicha ({best_model})")
     serie_forecast = pd.Series(y_future, index=fechas_futuras, name="Pronóstico Futuro (12M)")
+
+    errores = np.abs(serie_test_real - serie_test_pred)
 
     fig = go.Figure()
 
@@ -157,9 +159,10 @@ if file_ml:
         line=dict(color="gray", width=2)
     ))
 
-    # Evaluación predicha (línea punteada naranja)
+    # Evaluación predicha (línea punteada + barras de error)
     fig.add_trace(go.Scatter(
         x=serie_test_pred.index, y=serie_test_pred.values,
+        error_y=dict(type="data", array=errores, visible=True, color="rgba(255,140,0,0.4)"),
         mode="lines+markers", name=f"Ajuste del Modelo ({best_model})",
         line=dict(color="orange", width=3, dash="dot"),
         marker=dict(size=5, color="orange")
@@ -173,15 +176,16 @@ if file_ml:
         marker=dict(size=5, color="green")
     ))
 
-    # Líneas verticales para dividir periodos
-    fig.add_vline(x=y_train.index[-1], line_dash="dash", line_color="black",
+    # Líneas verticales (convertidas correctamente a datetime)
+    fig.add_vline(x=y_train.index[-1].to_pydatetime(), line_dash="dash", line_color="black",
                   annotation_text="Fin Entrenamiento", annotation_position="top right")
-    fig.add_vline(x=y_test.index[-1], line_dash="dash", line_color="gray",
+
+    fig.add_vline(x=y_test.index[-1].to_pydatetime(), line_dash="dash", line_color="gray",
                   annotation_text="Fin Evaluación", annotation_position="top right")
 
     fig.update_layout(
         template="plotly_white",
-        title=f"Evolución del Precio de la Soya – {best_model}: Entrenamiento, Evaluación y Pronóstico",
+        title=f"Evolución del Precio de la Soya – {best_model}: Entrenamiento, Evaluación y Pronóstico (con Error Visual)",
         xaxis_title="Fecha",
         yaxis_title="Precio (USD/TM)",
         legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
@@ -200,10 +204,11 @@ if file_ml:
         "Real": y_test.values,
         f"Predicho ({best_model})": resultados[best_model],
     })
+    df_eval["Error Abs."] = np.abs(df_eval["Real"] - df_eval[f"Predicho ({best_model})"])
     df_eval["Error (%)"] = np.abs((df_eval["Real"] - df_eval[f"Predicho ({best_model})"]) / df_eval["Real"]) * 100
-    st.dataframe(df_eval.style.format({"Real": "{:.2f}", f"Predicho ({best_model})": "{:.2f}", "Error (%)": "{:.2f}"}))
 
-    st.caption("📈 Esta tabla muestra los valores reales vs los predichos por el modelo ganador en la muestra de evaluación, junto con su error porcentual mes a mes.")
+    st.dataframe(df_eval.style.format({"Real": "{:.2f}", f"Predicho ({best_model})": "{:.2f}", "Error Abs.": "{:.2f}", "Error (%)": "{:.2f}"}))
+    st.caption("📈 Esta tabla muestra los valores reales vs los predichos por el modelo ganador en la muestra de evaluación, junto con su error absoluto y porcentual.")
 
     # ==============================================================
     # Descarga Excel
