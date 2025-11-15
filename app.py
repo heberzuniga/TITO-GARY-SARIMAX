@@ -1,6 +1,6 @@
 # ==============================================================
 # 🧠 SolverTic SoyAI Predictor – Sistema Inteligente de Modelado del Precio de la Soya
-# Versión 5.8 – Full Dashboard con Exógenas, Métricas y Visualización
+# Versión 5.9 – Estable y Final (Visualización + Exógenas + Ensemble + Pronóstico)
 # ==============================================================
 
 import os
@@ -61,7 +61,7 @@ def theil_u2(y_true, y_pred):
 # ==============================================================
 
 st.title("🌾 SolverTic SoyAI Predictor – Dashboard Completo de Modelado y Pronóstico")
-st.caption("Versión 5.8 – Machine Learning + Variables Exógenas + Métricas + Visualización")
+st.caption("Versión 5.9 – Machine Learning + Variables Exógenas + Métricas + Visualización")
 
 file_ml = st.file_uploader("📂 Sube tu archivo CSV con variables (ejemplo: Fecha, Precio, Aceite, Harina...)", type=["csv"])
 
@@ -106,8 +106,10 @@ if file_ml:
     # ==============================================================
 
     modelos = {
-        "XGBoost": XGBRegressor(n_estimators=800, learning_rate=0.03, max_depth=6, subsample=0.8, colsample_bytree=0.8, random_state=42),
-        "Random Forest": RandomForestRegressor(n_estimators=1000, max_depth=10, min_samples_split=4, min_samples_leaf=2, random_state=42),
+        "XGBoost": XGBRegressor(n_estimators=800, learning_rate=0.03, max_depth=6,
+                                subsample=0.8, colsample_bytree=0.8, random_state=42),
+        "Random Forest": RandomForestRegressor(n_estimators=1000, max_depth=10,
+                                               min_samples_split=4, min_samples_leaf=2, random_state=42),
         "SVM (Optimizado)": SVR(kernel="rbf", C=20, epsilon=0.05, gamma=0.05),
         "Neural Network": MLPRegressor(hidden_layer_sizes=(60, 60), max_iter=2000, random_state=42)
     }
@@ -177,7 +179,7 @@ if file_ml:
     st.info(f"📉 MAPE promedio validación cruzada (SVM Optimizado): {np.mean(scores):.2f}%")
 
     # ==============================================================
-    # PRONÓSTICO FUTURO 12 MESES (SVM + ENSEMBLE)
+    # 🔮 PRONÓSTICO FUTURO 12 MESES (SVM + ENSEMBLE)
     # ==============================================================
 
     st.subheader("🔮 Pronóstico Futuro (12 meses) – Mejor Modelo y Ensemble")
@@ -185,13 +187,13 @@ if file_ml:
     horizon = 12
     fechas_futuras = pd.date_range(df.index[-1] + timedelta(days=30), periods=horizon, freq="M")
 
-    model_best = modelos["SVM (Optimizado)"]
-    X_future = X.iloc[-1:].copy()
-    for i in range(horizon):
-        X_future = pd.concat([X_future, X_future.tail(1)], ignore_index=True)
+    # Crear DataFrame futuro correcto
+    ultima_fila = X.iloc[-1:].copy()
+    X_future = pd.concat([ultima_fila] * horizon, ignore_index=True)
     X_future.index = fechas_futuras
+
     X_future_s = scalerX.transform(X_future)
-    y_future_svm_s = model_best.predict(X_future_s)
+    y_future_svm_s = modelos["SVM (Optimizado)"].predict(X_future_s)
     y_future_svm = scalerY.inverse_transform(y_future_svm_s.reshape(-1, 1)).ravel()
 
     # Ensemble Manual
@@ -218,7 +220,6 @@ if file_ml:
     })
     st.dataframe(df_pred.style.format({"Pronóstico_SVM": "{:.2f}", "Pronóstico_Ensemble": "{:.2f}"}))
 
-    # Exportar Excel
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
         df_pred.to_excel(writer, index=False, sheet_name="Pronóstico")
