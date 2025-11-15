@@ -1,6 +1,6 @@
 # ==============================================================
 # 🧠 SolverTic SoyAI Predictor – Sistema Inteligente de Modelado del Precio de la Soya
-# Versión 6.5.1 – Periodos Divididos + Barras de Error + Corrección add_vline
+# Versión 6.5.2 – Corrección Fechas + Checkbox Barras de Error + División Visual
 # ==============================================================
 
 import os
@@ -20,9 +20,6 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.svm import SVR
 from xgboost import XGBRegressor
-from prophet import Prophet
-from prophet.models import StanBackendEnum
-Prophet.stan_backend = StanBackendEnum.CMDSTANPY
 import plotly.graph_objects as go
 import math
 from io import BytesIO
@@ -44,8 +41,8 @@ def mape(y_true, y_pred):
 # INTERFAZ PRINCIPAL
 # ==============================================================
 
-st.title("🌾 SolverTic SoyAI Predictor – Visualización por Periodos v6.5.1")
-st.caption("Entrenamiento, evaluación y pronóstico claramente divididos con barras de error visuales y tabla comparativa")
+st.title("🌾 SolverTic SoyAI Predictor – Visualización por Periodos v6.5.2")
+st.caption("Entrenamiento, evaluación y pronóstico claramente divididos con opción de mostrar barras de error y tabla comparativa.")
 
 file_ml = st.file_uploader("📂 Sube tu archivo CSV (Fecha, Precio, Aceite, Harina, etc.)", type=["csv"])
 
@@ -56,6 +53,7 @@ if file_ml:
 
     col_obj = st.selectbox("🎯 Variable objetivo (precio a predecir)", df.columns)
     exog_cols = st.multiselect("📈 Variables exógenas (opcional)", [c for c in df.columns if c != col_obj])
+    show_errors = st.checkbox("Mostrar barras de error en evaluación", value=True)
 
     # ==============================================================
     # Feature Engineering
@@ -131,10 +129,10 @@ if file_ml:
     y_future = scalerY.inverse_transform(y_future_s.reshape(-1, 1)).ravel()
 
     # ==============================================================
-    # 📊 GRAFICO COMPLETO CON PERIODOS Y BARRAS DE ERROR
+    # 📊 GRAFICO COMPLETO CON PERIODOS Y OPCIÓN DE BARRAS DE ERROR
     # ==============================================================
 
-    st.subheader("📈 Serie completa: Entrenamiento, Evaluación (con barras de error) y Pronóstico")
+    st.subheader("📈 Serie completa: Entrenamiento, Evaluación y Pronóstico")
 
     serie_train = pd.Series(y_train.values, index=y_train.index, name="Entrenamiento")
     serie_test_real = pd.Series(y_test.values, index=y_test.index, name="Evaluación Real")
@@ -159,10 +157,11 @@ if file_ml:
         line=dict(color="gray", width=2)
     ))
 
-    # Evaluación predicha (línea punteada + barras de error)
+    # Evaluación predicha (punteada + opcional error bars)
+    error_config = dict(type="data", array=errores, visible=show_errors, color="rgba(255,140,0,0.4)")
     fig.add_trace(go.Scatter(
         x=serie_test_pred.index, y=serie_test_pred.values,
-        error_y=dict(type="data", array=errores, visible=True, color="rgba(255,140,0,0.4)"),
+        error_y=error_config,
         mode="lines+markers", name=f"Ajuste del Modelo ({best_model})",
         line=dict(color="orange", width=3, dash="dot"),
         marker=dict(size=5, color="orange")
@@ -176,16 +175,35 @@ if file_ml:
         marker=dict(size=5, color="green")
     ))
 
-    # Líneas verticales (convertidas correctamente a datetime)
-    fig.add_vline(x=y_train.index[-1].to_pydatetime(), line_dash="dash", line_color="black",
-                  annotation_text="Fin Entrenamiento", annotation_position="top right")
+    # ==============================================================
+    # Líneas verticales (usando shapes y anotaciones seguras)
+    # ==============================================================
 
-    fig.add_vline(x=y_test.index[-1].to_pydatetime(), line_dash="dash", line_color="gray",
-                  annotation_text="Fin Evaluación", annotation_position="top right")
+    y_min, y_max = min(y.min(), y_future.min()), max(y.max(), y_future.max())
+
+    fig.add_shape(
+        type="line", x0=y_train.index[-1], x1=y_train.index[-1],
+        y0=y_min, y1=y_max,
+        line=dict(color="black", width=2, dash="dash")
+    )
+    fig.add_annotation(
+        x=y_train.index[-1], y=y_max, text="Fin Entrenamiento",
+        showarrow=False, yshift=10, font=dict(color="black")
+    )
+
+    fig.add_shape(
+        type="line", x0=y_test.index[-1], x1=y_test.index[-1],
+        y0=y_min, y1=y_max,
+        line=dict(color="gray", width=2, dash="dash")
+    )
+    fig.add_annotation(
+        x=y_test.index[-1], y=y_max, text="Fin Evaluación",
+        showarrow=False, yshift=10, font=dict(color="gray")
+    )
 
     fig.update_layout(
         template="plotly_white",
-        title=f"Evolución del Precio de la Soya – {best_model}: Entrenamiento, Evaluación y Pronóstico (con Error Visual)",
+        title=f"Evolución del Precio de la Soya – {best_model}: Entrenamiento, Evaluación y Pronóstico",
         xaxis_title="Fecha",
         yaxis_title="Precio (USD/TM)",
         legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
@@ -194,7 +212,7 @@ if file_ml:
     st.plotly_chart(fig, use_container_width=True)
 
     # ==============================================================
-    # 📋 TABLA DE COMPARACIÓN REAL VS PREDICHO EN EVALUACIÓN
+    # 📋 TABLA DE COMPARACIÓN REAL VS PREDICHO
     # ==============================================================
 
     st.subheader("📋 Comparación: Real vs Predicho en Muestra de Evaluación")
@@ -208,7 +226,7 @@ if file_ml:
     df_eval["Error (%)"] = np.abs((df_eval["Real"] - df_eval[f"Predicho ({best_model})"]) / df_eval["Real"]) * 100
 
     st.dataframe(df_eval.style.format({"Real": "{:.2f}", f"Predicho ({best_model})": "{:.2f}", "Error Abs.": "{:.2f}", "Error (%)": "{:.2f}"}))
-    st.caption("📈 Esta tabla muestra los valores reales vs los predichos por el modelo ganador en la muestra de evaluación, junto con su error absoluto y porcentual.")
+    st.caption("📊 Valores reales vs predichos por el modelo ganador, con error absoluto y porcentual.")
 
     # ==============================================================
     # Descarga Excel
