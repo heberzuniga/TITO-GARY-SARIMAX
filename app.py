@@ -1,6 +1,6 @@
 # ==============================================================
 # 🧠 SolverTic SoyAI Predictor – Sistema Inteligente de Modelado del Precio de la Soya
-# Versión 6.1 – Precision Pro + Verificación de Variables Exógenas
+# Versión 6.2 – Precision Pro + Verificación de Exógenas + Serie Completa
 # ==============================================================
 
 import os
@@ -59,8 +59,8 @@ def theil_u2(y_true, y_pred):
 # INTERFAZ PRINCIPAL
 # ==============================================================
 
-st.title("🌾 SolverTic SoyAI Predictor – Precision Pro v6.1")
-st.caption("Optimización total: lags extendidos + tuning XGBoost + RobustScaler + validación cruzada temporal + verificación exógenas")
+st.title("🌾 SolverTic SoyAI Predictor – Precision Pro v6.2")
+st.caption("Optimización total: lags extendidos + tuning XGBoost + RobustScaler + validación cruzada + verificación exógenas + serie completa")
 
 file_ml = st.file_uploader("📂 Sube tu archivo CSV con variables (Fecha, Precio, Aceite, Harina, etc.)", type=["csv"])
 
@@ -182,18 +182,6 @@ if file_ml:
     st.dataframe(X.tail(1).T.style.format("{:.3f}"))
 
     # ==============================================================
-    # Visualización de predicciones
-    # ==============================================================
-
-    st.subheader("📈 Comparación Predicciones vs. Valores Reales")
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=y_test.index, y=y_test, name="Real", line=dict(color="black", width=2)))
-    for name, y_pred in resultados.items():
-        fig.add_trace(go.Scatter(x=y_test.index, y=y_pred, name=name))
-    fig.update_layout(template="plotly_white", xaxis_title="Fecha", yaxis_title="Precio (USD/TM)")
-    st.plotly_chart(fig, use_container_width=True)
-
-    # ==============================================================
     # Pronóstico Futuro 12 Meses
     # ==============================================================
 
@@ -219,19 +207,45 @@ if file_ml:
         if m in resultados:
             y_future_ensemble += pesos.iloc[i] * resultados[m][-horizon:]
 
-    fig_future = go.Figure()
-    fig_future.add_trace(go.Scatter(x=df.index, y=y, name="Histórico", line=dict(color="#2E8B57")))
-    fig_future.add_trace(go.Scatter(x=fechas_futuras, y=y_future_svm, name="SVM Optimizado", line=dict(color="red", dash="dot")))
-    fig_future.add_trace(go.Scatter(x=fechas_futuras, y=y_future_ensemble, name="Ensemble Automático", line=dict(color="green", width=3)))
-    fig_future.update_layout(title="Pronóstico 12 Meses – SVM + Ensemble Automático", template="plotly_white")
-    st.plotly_chart(fig_future, use_container_width=True)
-
     df_pred = pd.DataFrame({
         "Fecha": fechas_futuras,
         "Pronóstico SVM": y_future_svm,
         "Pronóstico Ensemble": y_future_ensemble
     })
     st.dataframe(df_pred.style.format({"Pronóstico SVM": "{:.2f}", "Pronóstico Ensemble": "{:.2f}"}))
+
+    # ==============================================================
+    # 📊 GRÁFICO GLOBAL: SERIE REAL + EVALUACIÓN + PRONÓSTICO
+    # ==============================================================
+
+    st.subheader("📈 Serie Completa: Real vs. Evaluación vs. Pronóstico 12 Meses")
+
+    hist_index = y_train.index
+    test_index = y_test.index
+    forecast_index = fechas_futuras
+
+    serie_entrenamiento = pd.Series(y_train.values, index=hist_index, name="Entrenamiento")
+    serie_test = pd.Series(y_test.values, index=test_index, name="Evaluación")
+    serie_pronostico = pd.Series(y_future_ensemble, index=forecast_index, name="Pronóstico 12M (Ensemble)")
+
+    fig_timeline = go.Figure()
+    fig_timeline.add_trace(go.Scatter(x=serie_entrenamiento.index, y=serie_entrenamiento.values,
+                                      mode="lines", name="Datos Históricos (Train)", line=dict(color="#1f77b4", width=2)))
+    fig_timeline.add_trace(go.Scatter(x=serie_test.index, y=serie_test.values,
+                                      mode="lines", name="Muestra de Evaluación (Test)", line=dict(color="#ff7f0e", width=2)))
+    fig_timeline.add_trace(go.Scatter(x=serie_pronostico.index, y=serie_pronostico.values,
+                                      mode="lines+markers", name="Pronóstico Futuro (12M)",
+                                      line=dict(color="#2ca02c", width=3, dash="dot"), marker=dict(size=5, color="#2ca02c")))
+    fig_timeline.update_layout(template="plotly_white",
+                               title="Evolución del Precio de la Soya: Serie Real + Evaluación + Pronóstico a 12 Meses",
+                               xaxis_title="Fecha", yaxis_title="Precio (USD/TM)",
+                               legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
+                               hovermode="x unified")
+    st.plotly_chart(fig_timeline, use_container_width=True)
+
+    # ==============================================================
+    # Descarga Excel
+    # ==============================================================
 
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
